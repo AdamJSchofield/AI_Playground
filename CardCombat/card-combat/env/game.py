@@ -1,57 +1,92 @@
 import numpy
-from players import *
-from decks import *
-from cards import *
-
-LEGAL_ACTIONS = numpy.array([[0, 0],[0, 2],[0, None],[1, None],[2, None], [None, None]])
+from env.players import *
+from env.decks import *
+from env.cards import *
+from collections import OrderedDict
 
 class game:
-    def __init__(self, player_names):
-        self.players = {
-            player_name: Player(50, 3, standard_deck(), 4) for player_name in player_names
-        }
+
+    HAND_SIZE = 4
+    DECK_SIZE = 30
+
+    def __init__(self, player_names, player_healths = [50, 50], player_energies = [3, 3], player_decks= [DECK_TYPE.STANDARD, DECK_TYPE.STANDARD]):
+       
+        self.players = {player_names[i]: Player(player_healths[i], player_energies[i], deck(player_decks[i]), self.HAND_SIZE) for i in range(2)}
         self.player_names = player_names
 
-    def is_player_dead(self, requested_player):
-        return self.players[requested_player].health <= 0
+        actions = ALL_CARDS.copy()
+        actions.append(None)
+        self.ACTIONS = actions
+        # Name and max value for organization. Flattened in get_observation_space to values representing the max discrete value for that space (i.e highest card type value, highest count for given card, etc...)
+        self.OBSERVATION_SHAPE = flatten_observation({
+            "player_health": max(player_healths) + 1, # if max health is 50, number of values could be 0-50 which is 51 possible values
+            "opponent_health": max(player_healths) + 1,
+            "player_energy": max(player_energies),
+            "hand_counts": [len(ALL_CARDS)] * len(ALL_CARDS), # ex [2, 0, 1] would be 2 FIREBALL, 0 FIREBLAST, 1 HEAL 
+            "cards_played": [len(ALL_CARDS) + 1] * (self.HAND_SIZE), # ex [2, 1, None, None] would be HEAL then FIREBLAST played so far this turn. Max value is len(ALL_CARDS)
+            "opponent_cards_played": [len(ALL_CARDS) + 1] * (self.HAND_SIZE) # [2, None, None, None] means the opponent played HEAL then ended the turn
+        })
 
-    def apply_action_sequence(self, requested_player, action_id):
-        player: Player = self.players[requested_player]
-        name_index = self.player_names.index(requested_player)
-        other_player: Player = self.players[self.player_names[1 - name_index]]
-        action_sequence = LEGAL_ACTIONS[action_id]
-        for c in action_sequence:
-            if c is not None:
-                card: Card = ALL_CARDS[c]
-                player.play_card(card, other_player)
+    def is_player_dead(self, player_name):
+        return self.players[player_name].health <= 0
 
-    def get_player_state(self, requested_player):
-        player: Player = self.players[requested_player]
-        name_index = self.player_names.index(requested_player)
-        other_player: Player = self.players[self.player_names[1 - name_index]]
-        hand_mask = get_action_mask(player.hand)
+    def get_player_state(self, player_name):
+        player: Player = self.players[player_name]
+        player_index = self.player_names.index(player_name)
+
+        other_player_name = self.player_names[1 - player_index]
+        other_player: Player = self.players[other_player_name]
         
-        observation = [player.health, other_player.health]
-        observation = numpy.concatenate([observation, hand_mask], axis=0, dtype=numpy.int8)
-        return {
-                    "observation": observation,
-                    "action_mask": hand_mask
+        observation = {
+            "player_health": player.health,
+            "opponent_health": other_player.health,
+            "player_energy": player.energy,
+            "hand_counts": get_hand_counts(player.hand),
+            "cards_played": pad_list_with_nones(player.cards_played, self.HAND_SIZE),
+            "opponent_cards_played": pad_list_with_nones(other_player.cards_played, self.HAND_SIZE)
+        }
+
+        return  {
+                    "observation": flatten_observation(observation),
+                    "action_mask": self.get_action_mask(player)
                 }
     
-    def reset_player_hand(self, requested_player):
-        self.players[requested_player].reset_hand()
+    def take_action(self, action, player_name, opponent_name):
+        if self.ACTIONS[action] is not None:
+            self.players[player_name].play_card(ALL_CARDS[action], self.players[opponent_name])
+            return False
+        else:
+            return True
 
 
-def get_action_mask(hand: list[Card]):
-    hand_values = list(map(lambda c: c.cardType.value, hand))
-    return numpy.array(list(map(lambda action: is_action_valid(action, hand_values), LEGAL_ACTIONS)))
+    def get_action_mask(self, player):
+        mask = []
+        for card in ALL_CARDS:
+            if card in player.hand and card.energyCost <= player.energy:
+                mask.append(1)
+            else:
+                mask.append(0)
+        mask.append(1)
+        return numpy.array(mask)
 
-def is_action_valid(action, hand_values: list[int]):
-    if (action[0] == action[1]):
-        if (action[0] is None and action[1] is None):
-            return numpy.int8(1)
-        return numpy.int8(1) if hand_values.count(action[0]) > 1 else numpy.int8(0)
-    return numpy.int8(1) if (action[0] in hand_values or action[0] is None) and (action[1] in hand_values or action[1] is None) else numpy.int8(0)
+def flatten_observation(observation):
+    flat = []
+    for value in observation.values():
+        if (isinstance(value, list)):
+            flat = flat + value
+        else:
+            flat.append(value)
+    return numpy.array(flat, dtype=numpy.int8)
+
+def get_hand_counts(hand: list[Card]):
+    hand_counts = []
+    for card in ALL_CARDS:
+        hand_counts.append(hand.count(card))
+    return hand_counts
+
+def pad_list_with_nones(list: list, length: int):
+    return list + [-1] * (length - len(list))
+
 
 
 

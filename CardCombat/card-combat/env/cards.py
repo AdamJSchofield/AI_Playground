@@ -25,11 +25,11 @@ class FireballCard(Card):
 class FireBlastCard(Card):
     def __init__(self):
         super().__init__(CardType.FIREBLAST, 3, False)
-        self.damage = 10
+        self.damage = 7
 
 class HealCard(Card):
     def __init__(self):
         super().__init__(CardType.HEAL, 2, True)
-        self.healing = 3
+        self.healing = 5
 
 ALL_CARDS = [FireballCard(), FireBlastCard(), HealCard()]
